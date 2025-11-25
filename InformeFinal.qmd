@@ -1,0 +1,452 @@
+---
+title: "Trabajo Final Demografía"
+subtitle: "Análisis Poblacional del estado de Puebla, México"
+author: 
+  - "Salgado Bahena Arturo"
+  - "Solache Neri Arturo Iván"
+format: pdf
+editor: visual
+---
+
+
+## Introducción al estado de Puebla.
+
+El estado de Puebla es una de las entidades más pobladas de México. Según el Censo de Población y Vivienda 2020 del INEGI, la población total fue de aproximadamente 6.58 millones de habitantes, de los cuales cerca del 52 % son mujeres y 48 % hombres. Esto representa alrededor del 5 % de la población nacional.
+
+Puebla combina una estructura demográfica urbano–rural mixta. Gran parte de la población se concentra en la zona metropolitana Puebla–Tlaxcala y en ciudades medianas como Tehuacán, Atlixco, San Martín Texmelucan y Cholula. Aun así, el estado mantiene un gran número de localidades rurales: más de 7,500 son rurales y poco más de 400 urbanas. La densidad poblacional en 2020 fue cercana a 192 habitantes por km².
+
+Al analizar la mortalidad para 2010, 2019 y 2021 es importante considerar el impacto de la pandemia de COVID-19. A nivel nacional, diversos estudios registran un exceso de mortalidad de alrededor de 700 mil defunciones entre 2020 y 2021, además de una reducción de la esperanza de vida al nacer de aproximadamente 4 a 5 años. Por esta razón, es esperable que las tablas de vida de 2021 muestren:
+
+  - Un deterioro de la supervivencia, sobre todo entre los 40 y 69 años.
+  - Un impacto mayor en hombres que en mujeres.
+  - Una caída en la esperanza de vida al nacer respecto a 2010 y 2019.
+
+
+## Diagrama de flujo del proceso de construcción de tablas de vida.
+
+![](diagramaflujo.png)
+
+
+
+
+## Algoritmos de inicio.
+
+Aquí enlistamos los algoritmos utilizados en el proyecto. Todos están almacenados en un archivo R Script llamado functions.R. Los principales cálculos corresponden a la construcción de tablas abreviadas de vida y a la interpolación exponencial para obtener los Años Persona Vividos (APV).
+
+```r
+lt_abr <- function(x, mx, sex="f", IMR=NA){
+  
+  m <- length(x)
+  n <- c(diff(x), NA)  
+  
+  ax <- n/2    
+  
+  # Pag. 4 notas de clase - cuadro
+  
+# Coale y Demeny edades 0 a 1
+  
+  if(sex=="m"){
+    if(mx[1]>=0.107){ ax[1] <- 0.330 }else{
+      ax[1] <- 0.045+2.684*mx[1]
+    } 
+  } else if(sex=="f"){
+    if(mx[1]>=0.107){ ax[1] <- 0.350 }else{
+      ax[1] <- 0.053+2.800*mx[1]
+    }  
+  }
+  
+# Coale y Demeny edades 1 a 4
+  if(sex=="m"){
+    if(mx[1]>=0.107){ ax[2] <- 1.352 }else{
+      ax[2] <- 1.651-2.816*mx[1]
+    } 
+  } else if(sex=="f"){
+    if(mx[1]>=0.107){ ax[2] <- 1.361 }else{
+      ax[2] <- 1.522-1.518*mx[1]
+    }  
+  }
+  
+# Probabilidad de muerte
+  qx <- (n*mx)/(1+(n-ax)*mx)
+  qx[m] <- 1
+  
+
+# Proba de sobrevivir
+  px <- 1-qx
+  
+
+# l_x
+  lx <- 100000 * cumprod(c(1,px[-m]))
+  
+
+# Defunciones
+  dx <- c(-diff(lx), lx[m])
+  
+
+# Años persona vividos
+  Lx <- n* c(lx[-1], 0) + ax*dx
+  Lx[m] <- lx[m]/mx[m]
+  
+
+# Años persona vividos acumulados
+  
+  Tx <- rev(cumsum(rev(Lx)))
+  
+
+# Esperanza de vida
+  ex <- Tx/lx
+  
+  return(data.table(x, n, mx, ax, qx, px, lx, dx, Lx, Tx,     ex))
+  }
+
+
+# Uso la función lt_abr
+
+  lt_abr(x, mx)
+
+
+
+# Crecimiento exponencial ----
+
+expo <- function(N_0, N_T, t_0, t_T, t){
+  
+  dt <- decimal_date(as.Date(t_T)) - decimal_date(as.Date(t_0))
+  r <- log(N_T/N_0)/dt
+  
+  h <- t - decimal_date(as.Date(t_0))
+  N_h <- N_0 * exp(r*h)  
+  
+  return(N_h)
+  
+}
+```
+
+# Obtención de datos.
+
+Para obtener la información utilizamos bases del INEGI.
+Los Años Persona Vividos provienen del [Censo de Población y Vivienda (CPV)](https://www.inegi.org.mx/programas/ccpv/2020/) de 2010 y 2020.
+Se seleccionaron las variables de edad, sexo y el filtro correspondiente al estado de Puebla.
+
+Para las defunciones, se usaron los datos de [Estadísticas de Defunciones Registradas (EDR)](https://www.inegi.org.mx/programas/edr/).
+También seleccionamos las variables de edad, sexo, la entidad federativa y los años de referencia entre 1990 y 2020.
+
+
+# Limpieza y Preparación.
+
+Para los Años Persona Vividos (APV):
+  - Se eliminaron encabezados y filas no útiles.
+  - Se renombraron las columnas.
+  - Se verificó que los datos estuvieran en el tipo     correcto (numérico, texto, etc.).
+  - Se unieron los datos de 2010 y 2020 en una sola tabla.
+  - Se agruparon las edades en grupos quinquenales.
+  - Finalmente, se exportó la tabla a formato .csv.
+  
+Para las Defunciones, el proceso fue similar, pero incluyó un paso adicional:
+  - Se realizó un prorrateo de las defunciones no especificadas, distribuyéndolas entre hombres y mujeres según su proporción observada.
+
+
+
+# Cálculo de los Años Persona Vividos.
+
+```r
+## Limpieza de memoria ---
+rm(list = ls())
+
+
+## Carga de paquetes y funciones ---
+
+source("script/functions.R")
+library(readxl)
+library(reshape2)
+library(lubridate)
+library(ggplot2)
+library(data.table)
+library(dplyr)
+
+## Carga de tablas de datos ----
+censos_pro <- fread("data/censos_pro.csv")
+
+## Cálculo de APV 2010 ----
+N <- expo(censos_pro[year==2010] %>% .$pop,
+          censos_pro[year==2020] %>% .$pop,
+                     t_0 = "2010-06-25", t_T = "2020-03-15", t = 2010.5)
+
+apv2010 <- censos_pro[year==2010, .(age, sex, N)]
+apv2010[ , year:= 2010]
+```
+
+# Cálculo de las Defunciones Registradas
+
+```r
+## Limpieza de gráficas ----
+graphics.off()
+
+##Limpieza de memoria ----
+rm(list = ls())
+
+#Carga de paquetes y funciones ----
+source("script/functions.R")
+library(readxl)
+library(reshape2)
+library(lubridate)
+library(ggplot2)
+library(data.table)
+library(dplyr)
+
+# Carga de tablas de datos ----
+def_pro <- fread("data/def_pro.csv") %>%
+        .[year %in% c(2009, 2010, 2011, 2018, 2019, 2020)]
+
+# Media móvil para el año de referencia ----
+def_pro[ , year_new := ifelse( year %in% 2009:2011, 
+                                    2010,
+                                    ifelse( year %in% 2018:2019, 
+                                            2019,
+                                            year ) ) ]
+
+# Datos preparados de defunciones
+def <- 
+  def_pro[ , 
+           .( deaths = mean( deaths ) ),
+           .( year = year_new, sex, age ) ]
+
+#Guardar tabla de DEF ---
+write.csv(def, "data/def.csv", row.names = F)
+
+
+```
+
+# Unión de ambas tablas para generar LT.
+
+En esta etapa combinamos los APV con las defunciones prorrateadas para obtener las tasas de mortalidad mx. Posteriormente aplicamos la función lt_abr() para generar las tablas de vida abreviadas por sexo y año.
+
+```r
+## Limpieza de gráficas ----
+graphics.off()
+
+## Limpieza de memoria ----
+rm(list = ls())
+
+## Carga de paquetes y funciones----
+source("Script/functions.R")
+library(readxl)
+library(reshape2)
+library(lubridate)
+library(ggplot2)
+library(data.table)
+library(dplyr)
+
+# Carga de tablas de datos ----
+def <- fread("data/def_pro.csv")
+apv <- fread("data/censos_pro.csv")
+
+# Unión de tablas de Años Persona Vividos y Defunciones ----
+lt_input <- setDT(left_join(apv, def, by = c("year", "sex", "age")))
+
+# Cálculo de mx ----
+lt_input[ , mx := deaths/N]
+lt_input[ , sex := if_else(sex=="male", "m", "f")]
+# Tablas de mortalidad nacional - eevv + censales 2010, 2019 ----
+lt_output <- data.table()
+for( s in c( 'm', 'f' ) ){
+  for( y in unique( lt_input$year ) ){
+    temp_dt <- lt_input[ sex == s & year == y ]
+    temp_lt <-
+      lt_abr(x = temp_dt$age,
+             mx = temp_dt$mx,
+             sex = s) %>%
+      setDT %>%
+      .[ , year := y ] %>%
+      .[ , sex := s ]
+    lt_output <-
+      rbind(
+        lt_output,
+        temp_lt[ , .( lt_desc = 'LT VR/Census, MEX',
+                      year = y,
+                      sex,
+                      age = x,
+                      mx = round( mx, 6 ),
+                      qx = round( qx, 6 ),
+                      ax = round( ax, 2 ),
+                      lx = round( lx, 0 ),
+                      dx = round( dx, 0 ),
+                      Lx = round( Lx, 0 ),
+                      Tx = round( Tx, 0 ),
+                      ex = round( ex, 2 )) ]
+      )
+  }
+}
+
+## Esperanzas de vida al nacer ----
+lt_output[ age == 0 ] %>% dcast( year ~ sex, value.var = 'ex' )
+
+
+lt_output <- read.csv("Data/tabla_mortalidad.csv")
+knitr::kable(lt_output, caption = "Tabla de Vida Puebla")
+## Mortalidad infantil ----
+lt_output[ age == 0 ] %>% dcast( year ~ sex, value.var = 'qx' )
+```
+
+# Resultados (Life Table)
+
+```{r}
+library(kableExtra)
+
+lt_output <- read.csv("/Users/arturosalgado/Documents/DEMOGRAFÍA 2026-1/FINAL_PROJ_DEMOGRAPHY/data/tabla_mortalidad_PUEBLA.csv")
+
+lt_output %>%
+  kbl(
+    caption   = "Tabla de Vida del Estado de Puebla",
+    booktabs  = TRUE,
+    longtable = TRUE  
+  ) %>%
+  kable_styling(
+    latex_options = c("repeat_header", "scale_down"),
+    full_width = FALSE  
+  )
+```
+
+# Gráficas de Población y Defunciones.
+
+![](poblacion2010.png)
+
+![](poblacion2019.png)
+
+![](poblacion2020.png)
+
+![](tasa mortalidad puebla año y sexo.png)
+
+![](evolucion tasa de mortalidad.png)
+
+![](Gráfica qx por sexo y año.png)
+
+
+# CAUSA ELIMINADA
+
+Obtención de tablas seleccionando variables de edad, sexo y localidad en [INEGI](https://www.inegi.org.mx/sistemas/olap/consulta/general_ver4/MDXQueryDatos.asp?#Regreso&c=28820); 
+
+LIMPIEZA:
+
+1) Carga de homicidios del INEGI (solo Puebla) ----
+hom <- read_xlsx("data/INEGI_HOM.xls", sheet = 1,
+                 range = "A5:F734")
+
+Ajuste de nombres de columnas según el archivo;
+names(hom) <- c("year", "age", "tot", "male", "female", "ns")
+setDT(hom)
+
+
+2) Limpiar edades igual que en def_pro ----
+hom <- hom[age != "Total" & year != "Total"]
+
+hom[ , age := gsub("Menores de ", "", age)]
+hom[ , age := substr(age, 1, 2)]
+hom[age == "1 ", age := 0]
+hom[age == "1-", age := 1]
+hom[age == "5-", age := 5]
+hom[age == "No", age := NA]  # si aplica
+hom[ , age := as.numeric(age)]
+
+3) Pasar tot/male/female a numérico ----
+hom[ , tot    := as.numeric(gsub(",", "", tot))]
+hom[ , male   := as.numeric(gsub(",", "", male))]
+hom[ , female := as.numeric(gsub(",", "", female))]
+hom[ , ns     := as.numeric(gsub(",", "", ns))]
+
+4) Agregar por year, age, sex (como con def_pro) ----
+hom_pro <- hom[ , .(male = sum(male,   na.rm = TRUE),
+                    female = sum(female, na.rm = TRUE),
+                    ns = sum(ns,       na.rm = TRUE)),
+                .(year, age)]
+
+5) Imputar no especificado (ns) proporcional, igual que def_pro ----
+hom_pro[ , tot := male + female]
+hom_pro[ , `:=`(p_male = male / tot,
+                p_female = female / tot)]
+
+hom_pro[ , `:=`(
+  male_adj   = male   + p_male   * ns,
+  female_adj = female + p_female * ns
+)]
+
+hom_pro <- hom_pro[ , .(year, age, male = male_adj, female = female_adj)]
+
+6) Pasar a formato largo (male/female → sex) ----
+hom_pro <- melt.data.table(
+  hom_pro,
+  id.vars      = c("year", "age"),
+  measure.vars = c("male", "female"),
+  variable.name = "sex",
+  value.name   = "deaths_hom"
+)
+
+7) Dejar solo 2010, 2019, 2021 y aplicar misma media móvil ----
+hom_pro <- hom_pro[year %in% c(2009, 2010, 2011, 2018, 2019, 2021)]
+
+hom_pro[ , year_new := ifelse(year %in% 2009:2011,
+                              2010,
+                              ifelse(year %in% 2018:2019,
+                                     2019,
+                                     year))]
+
+hom_pue <- hom_pro[
+  , .(deaths_hom = mean(deaths_hom)),
+  .(year = year_new, sex, age)
+]
+
+8) Guardar tabla final de homicidios ----
+fwrite(hom_pue, "data/def_hom.csv")
+
+#Tabla de vida con causa eliminada (homicidios)
+
+```{r}
+library(kableExtra)
+
+lt_output <- read.csv("/Users/arturosalgado/Documents/DEMOGRAFÍA 2026-1/FINAL_PROJ_DEMOGRAPHY/data/tabla_mortalidad_PUEBLA_hom_elim.csv")
+
+lt_output %>%
+  kbl(
+    caption   = "Tabla de Vida del Estado de Puebla",
+    booktabs  = TRUE,
+    longtable = TRUE  
+  ) %>%
+  kable_styling(
+    latex_options = c("repeat_header", "scale_down"),
+    full_width = FALSE  
+  )
+```
+
+
+# Análisis de resultados.
+
+## 1. Cambios en la estructura poblacional
+- Las pirámides de población de 2010, 2019 y 2020 muestran una transición clara: la base se estrecha y los grupos adultos se ensanchan.
+- Esto significa una **disminución sostenida de la fecundidad** y un avance gradual hacia el **envejecimiento**.
+- Aunque Puebla sigue siendo una población relativamente joven, la transformación estructural ya es evidente en una década.
+
+## 2. Diferencias en mortalidad por sexo
+- En todos los años analizados, las **tasas de mortalidad masculina son más altas** que las femeninas.
+- Este patrón persiste con lo observado a nivel nacional e internacional, debido a mayor exposición de los hombres a riesgos externos y enfermedades crónicas.
+
+## 3. Evolución de las tasas de mortalidad (mx)
+- Entre 2010 y 2019 se observa una **mejora ligera en la supervivencia**, con tasas de mortalidad ligeramente menores en 2019.
+- En 2021, las tasas de mortalidad aumentan de forma marcada, especialmente entre los **40 y 80 años**, un patrón 100% coherente con el impacto de la **pandemia de COVID-19**.
+
+## 4. Probabilidades de morir (qx)
+- La qx muestra una **tendencia descendente** de 2010 a 2019, reflejando mejoras sanitarias previas a la pandemia.
+- En 2021, la qx aumenta de forma significativa en edades medias y avanzadas.
+- La **mortalidad infantil (qx₀) se mantiene baja**, lo que confirma que el impacto de COVID-19 no se concentró en recién nacidos.
+
+## 5. Esperanza de vida (ex)
+- En 2010 y 2019, la ex presenta **mejoras moderadas**, especialmente entre las mujeres.
+- En **2021**, la esperanza de vida cae drásticamente:
+  - Hombres: descenso aproximado de **7 años**.
+  - Mujeres: descenso aproximado de **5 años**.
+- Este retroceso coloca a Puebla en niveles de esperanza de vida **similares a los de hace más de una década**.
+
+## 6. Conclusiones generales
+- Puebla muestra un proceso claro de transición demográfica: menor fecundidad y envejecimiento progresivo.
+- La mortalidad descendió gradualmente hasta 2019, pero 2021 representa un quiebre por el aumento abrupto de mx y qx.
+- Las mujeres mantienen mejores niveles de supervivencia, aunque también sufrieron afectaciones importantes durante la pandemia.
+- Todo en conjunto, los resultados evidencian que el COVID-19 produjo un impacto profundo en la dinámica de mortalidad del estado, alterando tendencias que habían mejorado durante años.
+
